@@ -1,0 +1,14 @@
+{
+    "name": "z/OS Certs - Health Checker Security",
+    "description": "This playbook enables users to see the output of z/OS Health Checker output for RACF checks.",
+    "spec": [
+        {
+        "type": "text",
+        "question_name": "User ID",
+        "question_description": "Specifies the user ID that will be granted permissions.",
+        "variable": "user_id_survey",
+        "required": true,
+        "default": "IBMUSER"
+        }
+    ]
+}

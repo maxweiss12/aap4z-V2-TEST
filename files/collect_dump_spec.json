@@ -1,0 +1,14 @@
+{
+    "name": "Collect dump",
+    "description": "Collect dump on a z/OS address space",
+    "spec": [
+        {
+        "type": "text",
+        "question_name": "What is your dump title?",
+        "question_description": "unique title for the z/OS dump",
+        "variable": "dump_title",
+        "required": true,
+        "default": ""
+        }
+    ]
+}

@@ -1,0 +1,882 @@
+- name: Setup Ansible Automation Platform Controller server.
+    Pre-load with projects, job templates, and credentials for demo-ing right out of the box.
+  hosts: automationcontroller
+  become: true
+  tasks:
+
+    - name: Install packages for cockpit.
+      tags: cockpit
+      ansible.builtin.package:
+        name: ['zip', 'cockpit-storaged', 'cockpit-podman', 'cockpit-packagekit', 'x3270-text']
+
+    - name: Install cockpit-navigator from RPM.
+      tags: cockpit
+      ansible.builtin.dnf:
+        name: "https://github.com/45Drives/cockpit-navigator/releases/download/v0.5.10/cockpit-navigator-0.5.10-1.el8.noarch.rpm"
+        validate_certs: false
+        disable_gpg_check: true
+        install_weak_deps: false
+        skip_broken: true
+
+    - name: Assemble and stage certificate for cockpit.
+      tags: cockpit
+      ansible.builtin.assemble:
+        src: /root/certificates
+        dest: /etc/cockpit/ws-certs.d/cockpit.cert
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Enable cockpit socket.
+      tags: cockpit
+      ansible.builtin.systemd_service:
+        name: cockpit.socket
+        enabled: true
+        state: started
+
+    - name: Ensure AAP on Z repo is enabled.
+      community.general.rhsm_repository:
+        name: ansible-automation-platform-2.4-for-rhel-9-s390x-rpms
+
+    - name: Create OAuth Token for AAP admin tasks.
+      tags: always, token
+      ansible.controller.token:
+        description: "Admin OAuth Token for Ansible Controller setup."
+        scope: write
+        state: present
+        controller_username: admin
+        controller_password: "{{ ansible_become_password }}"
+        validate_certs: false
+      when: controller_token is undefined
+      register: token
+
+    - name: Copy manifest.zip file to Controller.
+      ansible.builtin.copy:
+        src: "{{ manifest_file }}"
+        dest: /tmp/manifest.zip
+        mode: '0644'
+
+    - name: Attach the AAP license using manifest file.
+      ansible.controller.license:
+        manifest: /tmp/manifest.zip
+        controller_oauthtoken: "{{ controller_token }}"
+        validate_certs: false
+
+    - name: Create 'z_ansible_collections_samples' project.
+      tags: project, projects
+      ansible.controller.project:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z_ansible_collections_samples"
+        description: "Sample playbooks for automating IBM zSystems"
+        organization: "Default"
+        scm_update_on_launch: false
+        scm_type: git
+        scm_url: "https://github.com/IBM/z_ansible_collections_samples.git"
+        validate_certs: false
+
+    - name: Create 'ansible_zos' project.
+      tags: project, projects
+      ansible.controller.project:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "ansible_zos"
+        description: "Sample playbooks for automating z/OS"
+        organization: "Default"
+        scm_update_on_launch: false
+        scm_type: git
+        scm_url: "https://github.com/jacobemery/ansible_zos.git"
+        validate_certs: false
+
+    - name: Create 'aap4zos' project.
+      tags: project, projects
+      ansible.controller.project:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "aap4zos"
+        description: "Sample playbooks for automating z/OS using Ansible Automation Platform, specifically tailored for this TechZone demo."
+        organization: "Default"
+        scm_update_on_launch: false
+        scm_type: git
+        scm_url: "https://github.com/maxweiss12/aap4zos.git"
+        validate_certs: false
+
+    - name: Add 'AAP z/OS' inventory.
+      tags: inventory
+      ansible.controller.inventory:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "AAP z/OS"
+        description: "AAP on Z for z/OS demo inventory"
+        organization: "Default"
+        state: present
+        validate_certs: false
+
+    - name: Fetch private key from Controller.
+      tags: inventory, hosts, credential, credentials, zos_host
+      ansible.builtin.slurp:
+        src: /root/.ssh/id_rsa
+      register: ssh_key
+
+    - name: Create Machine credential for zos_host's SSH key.
+      tags: inventory, hosts, credential, credentials, zos_host
+      ansible.controller.credential:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Host SSH Key"
+        credential_type: Machine
+        organization: Default
+        description: "Private SSH key on Controller for connecting to z/OS host."
+        inputs:
+          ssh_key_data: "{{ ssh_key['content'] | b64decode }}"
+        validate_certs: false
+
+    - name: Create Vault credential for automationcontroller's sudo password / AAP admin password.
+      tags: inventory, hosts, credential, credentials, automationcontroller
+      ansible.controller.credential:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: AAP Controller Password
+        credential_type: Vault
+        organization: Default
+        description: "Credential for the AAP admin / automationcontroller's SSH password."
+        validate_certs: false
+        inputs:
+          vault_password: "{{ vault_controller_password }}"
+          vault_id: 'vault_controller_password'
+
+    - name: Add zos_host to 'AAP z/OS' inventory.
+      tags: inventory, hosts, zos_host
+      ansible.controller.host:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: zos_host
+        description: "z/OS server to automate against"
+        inventory: "AAP z/OS"
+        state: present
+        enabled: true
+        validate_certs: false
+        variables:
+          ansible_host: "{{ hostvars['zos_host'].ansible_host }}"
+          ansible_user: "{{ hostvars['zos_host'].ansible_user }}"
+          PYZ: "{{ hostvars['zos_host'].PYZ }}"
+          ZOAU: "{{ hostvars['zos_host'].ZOAU }}"
+          ansible_python_interpreter: "{{ hostvars['zos_host'].PYZ }}/bin/python3"
+          environment_vars:
+            _BPXK_AUTOCVT: "ON"
+            ZOAU_HOME: "{{ hostvars['zos_host'].ZOAU }}"
+            LIBPATH: "{{ hostvars['zos_host'].ZOAU }}/lib:{{ hostvars['zos_host'].PYZ }}/lib:/lib:/usr/lib:."
+            PATH: "{{ hostvars['zos_host'].ZOAU }}/bin:{{ hostvars['zos_host'].PYZ }}/bin:/bin:/var/bin"
+            _CEE_RUNOPTS: "FILETAG(AUTOCVT,AUTOTAG) POSIX(ON)"
+            _TAG_REDIR_ERR: "txt"
+            _TAG_REDIR_IN: "txt"
+            _TAG_REDIR_OUT: "txt"
+            LANG: "C"
+            PYTHONSTDINENCODING: "cp1047"
+
+    - name: Add automationcontroller to 'AAP z/OS' inventory.
+      tags: inventory, hosts, automationcontroller
+      ansible.controller.host:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: automationcontroller
+        description: "This Automation Controller (localhost)"
+        inventory: "AAP z/OS"
+        state: present
+        validate_certs: false
+        enabled: true
+        variables:
+          ansible_host: "{{ ansible_host }}"
+          ansible_user: "{{ ansible_user }}"
+          admin_username: "{{ admin_username }}"
+          ansible_connection: local
+
+    - name: Add EE to the controller instance
+      tags: ee, execution-environment
+      ansible.controller.execution_environment:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "aap4zos EE"
+        image: quay.io/jacob_emery/aap4zos-ee
+        pull: always
+        validate_certs: false
+
+    - name: Create 'z/OS Ping' job template.
+      tags: job_template, template, templates, zos_ping
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Ping"
+        description: "This playbook pings the z/OS host to test connectivity."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_ping.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+
+    - name: Launch 'z/OS Ping' job.
+      tags: job, jobs, zos_ping
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Ping"
+        validate_certs: false
+      register: zos_ping
+
+    - name: Create 'z/OS Gather Facts' job template.
+      tags: job_template, template, templates, zos_gather_facts
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Gather Facts"
+        description: "This sample playbook demonstrates the z/OS gather facts module, which pulls z/OS-specific information from the z/OS host."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_gather_facts.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+
+    - name: Launch 'z/OS Gather Facts' job.
+      tags: job, jobs, zos_gather_facts
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Gather Facts"
+        validate_certs: false
+      register: zos_gather_facts
+
+    - name: Delete 'Demo Job Template' job template.
+      tags: job_template, template, delete, demo_job_template
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Demo Job Template"
+        state: "absent"
+        validate_certs: false
+
+#    - name: Create 'z/OS Certs - Stage PKCS#12' job template.
+#      tags: job_template, template, templates, stage_pkcs
+#      ansible.controller.job_template:
+#        controller_oauthtoken: "{{ controller_token }}"
+#        name: "z/OS Certs - Stage PKCS#12"
+#        description: "This playbook creates a PKCS#12 package from z/OS cert and private key. Used during provisioning."
+#        job_type: "run"
+#        organization: "Default"
+#        inventory: "AAP z/OS"
+#        project: "aap4zos"
+#        playbook: "zos_concepts/certificate_management/stage_pkcs12.yml"
+#        credentials: "Demo Credential"
+#        execution_environment: "Default execution environment"
+#        ask_extra_vars: true
+#        state: "present"
+ #       validate_certs: false
+
+#    - name: Launch 'z/OS Certs - Stage PKCS#12' job to create a PCKS#12 package on the controller for later use.
+#      tags: job, jobs, stage_pkcs
+#      ansible.controller.job_launch:
+#        controller_oauthtoken: "{{ controller_token }}"
+#        job_template: "z/OS Certs - Stage PKCS#12"
+#        validate_certs: false
+#        extra_vars:
+#          zos_cert: "{{ zos_certificate }}"
+#          zos_cert_key: "{{ zos_private_key }}"
+#      register: stage_pkcs_job
+
+    - name: Create 'z/OS Job Submit' job template.
+      tags: job_template, template, zos_job_submit, job_submit
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Job Submit"
+        description: "This playbook shows a simple job submission from variable JCL file on the controller."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/jobs/submit_query_retrieve/job_submit.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'submit_job_survey_spec.json') }}"
+
+    - name: Launch 'z/OS Job Submit' job to allow for auto UID assignment.
+      tags: job, jobs, zos_job_submit, job_submit
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Job Submit"
+        validate_certs: false
+        extra_vars:
+          jcl: "BPX_NEW_USER"
+      register: zos_job_submit_job
+
+    - name: Create 'z/OS Job Submit Any' job template.
+      tags: job_template, template, zos_job_submit_any, job_submit_any
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Job Submit Any"
+        description: "A playbook for submitting any JCL directly to the z/OS host from AAP survey contents."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/jobs/submit_query_retrieve/job_submit_any.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'submit_job_any_survey_spec.json') }}"
+
+    - name: Create 'z/OS Jobs - Submit, Query, Retrieve' job template.
+      tags: job_template, template, zos_job_submit_query_retrieve, job_submit_query_retrieve
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Jobs - Submit, Query, Retrieve"
+        description: "This sample playbook demonstrates how to submit jobs, query and retrieve job output."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/jobs/submit_query_retrieve/submit_query_retrieve.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+
+    - name: Create 'z/OS Users - Add' job template.
+      tags: job_template, template, zos_add_user, add_user
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Users - Add"
+        description: "This playbook shows a simple job submission from variable JCL file on the controller."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/user_management/add_remove_user/add-user.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'add_user_survey_spec.json') }}"
+
+    # - name: Create 'z/OS Users - Delete' job template.
+    #   tags: job_template, template, zos_delete_user, delete_user
+    #   ansible.controller.job_template:
+    #     controller_oauthtoken: "{{ controller_token }}"
+    #     name: "z/OS Users - Delete"
+    #     description: "Delete a user on z/OS and optionally remove its data sets."
+    #     job_type: "run"
+    #     organization: "Default"
+    #     inventory: "AAP z/OS"
+    #     project: "aap4zos"
+    #     playbook: "zos_concepts/user_management/add_remove_user/remove-user.yml"
+    #     credentials: "z/OS Host SSH Key"
+    #     execution_environment: "aap4zos EE"
+    #     state: "present"
+    #     validate_certs: false
+    #     survey_enabled: true
+    #     survey_spec: "{{ lookup('file', 'delete_user_survey_spec.json') }}"
+
+    - name: Create 'z/OS Data Set - Basics' job template.
+      tags: job_template, template, templates, zos_data_set_basics, data_set, data_set_basics
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Data Set - Basics"
+        description: "This sample playbook demonstrates a variety of basic data set operations."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/data_sets/data_set_basics/data_set_basics.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+
+    - name: Create 'z/OS Data Set - Create' job template.
+      tags: job_template, template, templates, zos_create_data_set, create_data_set, data_set
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Data Set - Create"
+        description: "This playbook creates a z/OS data set of variable name, type, size, etc."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/data_sets/data_set_basics/create_data_set.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        verbosity: 1
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'create_data_set_survey_spec.json') }}"
+
+    - name: Create 'z/OS Data Set - Delete' job template.
+      tags: job_template, template, templates, zos_delete_data_set, delete_data_set, data_set
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Data Set - Delete"
+        description: "This playbook deletes a z/OS data set with variable name."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/data_sets/data_set_basics/delete_data_set.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        verbosity: 1
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'delete_data_set_survey_spec.json') }}"
+
+    - name: Create 'z/OS Data Set - Fetch' job template.
+      tags: job_template, template, templates, zos_fetch_data_set, fetch_data_set, data_set
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Data Set - Fetch"
+        description: "This playbook fetches a z/OS data set with variable data set name, source file, and destination path."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/data_sets/data_set_basics/fetch_data_set.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'fetch_data_set_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - Health Checker Security' job template.
+      tags: job_template, template, templates, zos_health_checker_security, health_checker_security
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Health Checker Security"
+        description: "This playbook enables users to see the output of z/OS Health Checker output for RACF checks."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/health_checker_security.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'health_checker_security_survey.json') }}"
+
+    - name: Launch 'z/OS Certs - Health Checker Security' job to enables users to see the output of z/OS Health Checker output for RACF checks.
+      tags: job, jobs, zos_health_checker_security, health_checker_security
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Certs - Health Checker Security"
+        validate_certs: false
+        extra_vars:
+          user_id_survey: "IBMUSER"
+      register: zos_job_submit_job
+
+    - name: Create 'z/OS Certs - Create Keyring' job template.
+      tags: job_template, template, templates, zos_create_keyring, create_keyring
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Create Keyring"
+        description: "This playbook deletes a keyring."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/create_keyring.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'create_keyring_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - Delete Keyring' job template.
+      tags: job_template, template, templates, zos_delete_keyring, delete_keyring
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Delete Keyring"
+        description: "This playbook deletes a keyring."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/delete_keyring.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'delete_keyring_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - Create Cert' job template.
+      tags: job_template, template, templates, zos_create_site_cert, create_site_cert
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Create Cert"
+        description: "This playbook creates a SITE, USER or CERTAUTH certificate. Signed by local CA or self-signed."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/create_cert.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'create_cert_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - Add CA Cert' job template.
+      tags: job_template, template, templates, zos_add_cert, add_cert
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Add CA Cert"
+        description: "This playbook adds a CA certificate to z/OS. Used during provisioning."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/add_ca_cert.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        ask_extra_vars: true
+        state: "present"
+        validate_certs: false
+
+    - name: Launch 'z/OS Certs - Add CA Cert' job to add the certificate authority to RACF.
+      tags: job, jobs, zos_add_cert, add_cert
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Certs - Add CA Cert"
+        validate_certs: false
+        extra_vars:
+          zos_ca_cert: "{{ zos_intermediate }}"
+          zos_cert: "{{ zos_certificate }}"
+          zos_cert_key: "{{ zos_private_key }}"
+          zos_cert_p12_tdes_base64: "{{ zos_certificate_p12_tdes_base64 }}"
+          zos_cert_p12_aes_base64: "{{ zos_certificate_p12_aes_base64 }}"
+          zos_cert_p12_password: "{{ zos_certificate_p12_password }}"
+        wait: true  
+      register: zos_add_cert_job
+      ignore_errors: true
+
+    - name: Create 'z/OS Certs - Delete Cert' job template.
+      tags: job_template, template, templates, zos_delete_cert, delete_cert
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Delete Cert"
+        description: "This playbook deletes a certificate."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/delete_cert.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'delete_cert_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - List Cert' job template.
+      tags: job_template, template, templates, zos_list_cert, list_cert
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - List Cert"
+        description: "This playbook displays a certificate's details."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/list_cert.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'list_cert_survey_spec.json') }}"
+
+    - name: Create 'z/OS Certs - Search and Renew' job template.
+      tags: job_template, template, templates, zos_search_and_renew_cert, search_and_renew_cert
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Certs - Search and Renew"
+        description: "This playbook searches for certificates with the details specified in the AAP survey and renews them."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/certificate_management/search_and_renew.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'search_and_renew_cert_survey_spec.json') }}"
+
+    - name: Create 'z/OS TSO Command(s)' job template.
+      tags: job_template, template, templates, zos_tso_commands, tso_commands
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS TSO Command(s)"
+        description: "A playbook to execute one or multiple TSO commands on the target z/OS system."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_tso_command.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        verbosity: 1
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'zos_tso_commands_survey_spec.json') }}"
+
+    - name: Create 'z/OS Operator Command' job template.
+      tags: job_template, template, templates, zos_operator_command, operator_command
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "z/OS Operator Command"
+        description: "A playbook to execute an operator command on the target z/OS system."
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/zos_operator/zos_operator_basics/zos_operator_command.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'zos_operator_command_survey_spec.json') }}"
+
+    - name: Create 'SMPE - Query CSI' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "SMPE - Query CSI"
+        description: "A playbook to query CSI for received PTFs"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/software_management/query_csi.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'smpe_spec.json') }}"
+
+    - name: Create new credential type for zOS passphrase
+      tags: inventory, hosts
+      ansible.controller.credential_type:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "zOS Passphrase Credential"
+        description: "Credential type for zOS passphrase"
+        kind: cloud 
+        validate_certs: false
+        inputs: {"fields": [{"id": "username", "type": "string", "label": "zOS User"}, {"id": "password", "type": "string", "label": "Passphrase", "secret": true}]}
+        injectors: 
+          extra_vars:
+            zos_userid: "{{ '{{' }} username {{ '}}' }}"
+            zos_passphrase: "{{ '{{' }} password {{ '}}' }}"
+
+
+    - name: generate random string
+      ansible.builtin.set_fact:
+        zmf_password: "{{ lookup('community.general.random_string', min_lower=1, min_upper=1, min_numeric=2, length=10) }}"
+      no_log: true
+
+
+    - name: Launch 'TSO Command' job to change user passphrase
+      tags: job, jobs
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS TSO Command(s)"
+        validate_certs: false
+        extra_vars:
+          zos_tso_command: "ALTUSER IBMUSER PHRASE('{{ zmf_password }}') NOEXPIRE RESUME"
+
+    - name: Create 'zOS Passphrase' credential
+      tags: inventory, hosts, credential, credentials
+      ansible.controller.credential:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "zOS Passphrase"
+        credential_type: "zOS Passphrase Credential"
+        organization: Default
+        description: "User’s zOS passphrase"
+        inputs:
+          username: 'testuser'
+          password: "{{ zmf_password }}"
+        validate_certs: false
+        
+    - name: Create 'SWI - Define SW instance' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "SWI - Define SW instance"
+        description: "A playbook to define software instances to z/OSMF"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "z_apars/define_sw_instances.yml"
+        credentials: ["z/OS Host SSH Key", "zOS Passphrase"]
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: false
+
+    - name: Launch 'SWI - Define SW instance' job template.
+      tags: job, jobs
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "SWI - Define SW instance"
+        validate_certs: false
+
+    - name: Create 'SWI - List all SW instances' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "SWI - List all SW instances"
+        description: "A playbook to list all software instances defined to z/OSMF"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "z_apars/list_sw_instances.yml"
+        credentials: ["z/OS Host SSH Key", "zOS Passphrase"]
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: false
+
+    - name: Create 'SWI - Query Missing Critical Updates' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "SWI - Query Missing Critical Updates"
+        description: "A playbook to query SW instance for missing critical updates"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "z_apars/identify_missing_critical_updates.yml"
+        credentials: ["z/OS Host SSH Key", "zOS Passphrase"]
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'swi_crit_updates_spec.json') }}"
+
+    - name: Create 'SWI - Query Missing Fixcat Updates' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "SWI - Query Missing Fixcat Updates"
+        description: "A playbook to query SW instance for missing fixcat updates"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "z_apars/identify_missing_fixcat_updates.yml"
+        credentials: ["z/OS Host SSH Key", "zOS Passphrase"]
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'swi_fixcat_updates_spec.json') }}"
+
+    - name: Create 'Db2 Reorg' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Db2 Reorg"
+        description: "A playbook to execute a Db2 for z/OS Reorg"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "zos_concepts/db2_reorg/db2-reorg.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'db2_reorg_spec.json') }}"     
+
+    - name: Create 'ShopZ & PDUU Setup' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "ShopZ & PDUU Setup"
+        description: "This playbook configures a ShopZ certificate on Wazi and performs manual setup req for PDUU"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "tls/test_agents_setup.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        ask_extra_vars: true
+        state: "present"
+        validate_certs: false
+
+    - name: Launch 'ShopZ & PDUU Setup' job.
+      tags: job, jobs, zos_add_cert, add_cert
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "ShopZ & PDUU Setup"
+        validate_certs: false
+        extra_vars:
+          shopz_cert: "{{ shopz_server_cert_base64 }}"
+          user_password: "{{ shopz_server_cert_password }}"
+        wait: true  
+      register: shopz_pduu_job
+      ignore_errors: true
+
+    - name: Create 'Collect dump' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Collect dump"
+        description: "Collect dump on a z/OS address space"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "tls/gather_dump.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'collect_dump_spec.json') }}"     
+    
+    - name: Create 'Send dump' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Send dump"
+        description: "Send dump to support case"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "tls/send_documentation.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'send_dump_spec.json') }}"     
+
+    
+    - name: Ansible Automation Platform Controller and z/OS Host setup is complete, get automating!
+      tags: setup_complete
+      ansible.builtin.debug:
+        msg: "Congratulations!"
