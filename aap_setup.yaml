@@ -95,7 +95,7 @@
         organization: "Default"
         scm_update_on_launch: false
         scm_type: git
-        scm_url: "https://github.com/maxweiss12/aap4zos.git"
+        scm_url: "https://github.com/maxweiss12/aap4zos-V2-TEST.git"
         validate_certs: false
 
     - name: Add 'AAP z/OS' inventory.
