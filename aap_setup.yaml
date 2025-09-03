@@ -188,7 +188,7 @@
       ansible.controller.execution_environment:
         controller_oauthtoken: "{{ controller_token }}"
         name: "aap4zos EE"
-        image: quay.io/jacob_emery/aap4zos-ee
+        image: quay.io/jacob_emery/aap4zos-ee:zoau_1.3
         pull: always
         validate_certs: false
 
