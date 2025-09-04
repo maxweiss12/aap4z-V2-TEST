@@ -409,6 +409,21 @@
         survey_enabled: true
         survey_spec: "{{ lookup('file', 'create_data_set_survey_spec.json') }}"
 
+    - name: Launch 'z/OS Data Set - Create' job
+      tags: job, jobs
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Data Set - Create"
+        validate_certs: false
+        extra_vars:
+          ds_name: "IBMUSER.REXX"
+          ds_type: "PDS"
+          ds_space_primary: 5
+          ds_space_type: "M"
+          ds_record_format: "FB"
+          ds_record_length: 80
+      register: zos_pds_job
+
     - name: Create 'z/OS Data Set - Delete' job template.
       tags: job_template, template, templates, zos_delete_data_set, delete_data_set, data_set
       ansible.controller.job_template:
