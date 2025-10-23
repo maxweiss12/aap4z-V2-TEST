@@ -515,22 +515,22 @@
         state: "present"
         validate_certs: false
 
-    # - name: Launch 'z/OS Certs - Add CA Cert' job to add the certificate authority to RACF.
-    #   tags: job, jobs, zos_add_cert, add_cert
-    #   ansible.controller.job_launch:
-    #     controller_oauthtoken: "{{ controller_token }}"
-    #     job_template: "z/OS Certs - Add CA Cert"
-    #     validate_certs: false
-    #     extra_vars:
-    #       zos_ca_cert: "{{ zos_intermediate }}"
-    #       zos_cert: "{{ zos_certificate }}"
-    #       zos_cert_key: "{{ zos_private_key }}"
-    #       zos_cert_p12_tdes_base64: "{{ zos_certificate_p12_tdes_base64 }}"
-    #       zos_cert_p12_aes_base64: "{{ zos_certificate_p12_aes_base64 }}"
-    #       zos_cert_p12_password: "{{ zos_certificate_p12_password }}"
-    #     wait: true  
-    #   register: zos_add_cert_job
-    #   ignore_errors: true
+    - name: Launch 'z/OS Certs - Add CA Cert' job to add the certificate authority to RACF.
+      tags: job, jobs, zos_add_cert, add_cert
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS Certs - Add CA Cert"
+        validate_certs: false
+        extra_vars:
+          zos_ca_cert: "{{ zos_intermediate }}"
+          zos_cert: "{{ zos_certificate }}"
+          zos_cert_key: "{{ zos_private_key }}"
+          zos_cert_p12_tdes_base64: "{{ zos_certificate_p12_tdes_base64 }}"
+          zos_cert_p12_aes_base64: "{{ zos_certificate_p12_aes_base64 }}"
+          zos_cert_p12_password: "{{ zos_certificate_p12_password }}"
+        wait: true  
+      register: zos_add_cert_job
+      ignore_errors: true
 
     - name: Create 'z/OS Certs - Delete Cert' job template.
       tags: job_template, template, templates, zos_delete_cert, delete_cert
@@ -662,14 +662,14 @@
       no_log: true
 
 
-    # - name: Launch 'TSO Command' job to change user passphrase
-    #   tags: job, jobs
-    #   ansible.controller.job_launch:
-    #     controller_oauthtoken: "{{ controller_token }}"
-    #     job_template: "z/OS TSO Command(s)"
-    #     validate_certs: false
-    #     extra_vars:
-    #       zos_tso_command: "ALTUSER IBMUSER PHRASE('{{ zmf_password }}') NOEXPIRE RESUME"
+    - name: Launch 'TSO Command' job to change user passphrase
+      tags: job, jobs
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "z/OS TSO Command(s)"
+        validate_certs: false
+        extra_vars:
+          zos_tso_command: "ALTUSER IBMUSER PHRASE('{{ zmf_password }}') NOEXPIRE RESUME"
 
     - name: Create 'zOS Passphrase' credential
       tags: inventory, hosts, credential, credentials
@@ -701,12 +701,12 @@
         validate_certs: false
         survey_enabled: false
 
-    # - name: Launch 'SWI - Define SW instance' job template.
-    #   tags: job, jobs
-    #   ansible.controller.job_launch:
-    #     controller_oauthtoken: "{{ controller_token }}"
-    #     job_template: "SWI - Define SW instance"
-    #     validate_certs: false
+    - name: Launch 'SWI - Define SW instance' job template.
+      tags: job, jobs
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "SWI - Define SW instance"
+        validate_certs: false
 
     - name: Create 'SWI - List all SW instances' job template.
       tags: job_template, template, templates
@@ -796,18 +796,18 @@
         state: "present"
         validate_certs: false
 
-    # - name: Launch 'ShopZ & PDUU Setup' job.
-    #   tags: job, jobs, zos_add_cert, add_cert
-    #   ansible.controller.job_launch:
-    #     controller_oauthtoken: "{{ controller_token }}"
-    #     job_template: "ShopZ & PDUU Setup"
-    #     validate_certs: false
-    #     extra_vars:
-    #       shopz_cert: "{{ shopz_server_cert_base64 }}"
-    #       user_password: "{{ shopz_server_cert_password }}"
-    #     wait: true  
-    #   register: shopz_pduu_job
-    #   ignore_errors: true
+    - name: Launch 'ShopZ & PDUU Setup' job.
+      tags: job, jobs, zos_add_cert, add_cert
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "ShopZ & PDUU Setup"
+        validate_certs: false
+        extra_vars:
+          shopz_cert: "{{ shopz_server_cert_base64 }}"
+          user_password: "{{ shopz_server_cert_password }}"
+        wait: true  
+      register: shopz_pduu_job
+      ignore_errors: true
 
     - name: Create 'Collect dump' job template.
       tags: job_template, template, templates
