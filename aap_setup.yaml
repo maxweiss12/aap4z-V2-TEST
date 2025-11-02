@@ -845,6 +845,30 @@
         survey_enabled: true
         survey_spec: "{{ lookup('file', 'send_dump_spec.json') }}"     
 
+    - name: Create 'Passticket Setup' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Passticket Setup"
+        description: "This playbook configures the z/OS system for passticket support"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "passticket-config/passticket-setup.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+
+    - name: Launch 'Passticket Setup' job.
+      tags: job, jobs, zos_add_cert, add_cert
+      ansible.controller.job_launch:
+        controller_oauthtoken: "{{ controller_token }}"
+        job_template: "Passticket Setup"
+        validate_certs: false
+        wait: true  
+      ignore_errors: true
     
     - name: Ansible Automation Platform Controller and z/OS Host setup is complete, get automating!
       tags: setup_complete
