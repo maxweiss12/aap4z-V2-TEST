@@ -869,6 +869,24 @@
         validate_certs: false
         wait: true  
       ignore_errors: true
+
+    - name: Create 'Add passticket user' job template.
+      tags: job_template, template, templates
+      ansible.controller.job_template:
+        controller_oauthtoken: "{{ controller_token }}"
+        name: "Add passticket user"
+        description: "adds passticket user for authentication service"
+        job_type: "run"
+        organization: "Default"
+        inventory: "AAP z/OS"
+        project: "aap4zos"
+        playbook: "passticket-config/add-ptk-user.yml"
+        credentials: "z/OS Host SSH Key"
+        execution_environment: "aap4zos EE"
+        state: "present"
+        validate_certs: false
+        survey_enabled: true
+        survey_spec: "{{ lookup('file', 'add_ptk_user_spec.json') }}"  
     
     - name: Ansible Automation Platform Controller and z/OS Host setup is complete, get automating!
       tags: setup_complete
